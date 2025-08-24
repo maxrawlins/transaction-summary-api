@@ -122,20 +122,27 @@ async def upload_csv(file: UploadFile = File(...)):
         if missing := (required - cols):
             raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(sorted(missing))}")
 
-        # insert rows into transactions table with explicit type casting
-        inserted = conn.execute(
-            """
-            INSERT INTO transactions
-            SELECT
-                CAST(transaction_id AS VARCHAR),
-                CAST(user_id AS INTEGER),
-                CAST(product_id AS INTEGER),
-                CAST(timestamp AS TIMESTAMP),
-                CAST(transaction_amount AS DOUBLE)
-            FROM tmp_csv
-            RETURNING 1;
-            """
-        ).fetchall()
+                # insert rows into transactions table with explicit type casting
+        try:
+            inserted = conn.execute(
+                """
+                INSERT INTO transactions
+                SELECT
+                    CAST(transaction_id AS VARCHAR),
+                    CAST(user_id AS INTEGER),
+                    CAST(product_id AS INTEGER),
+                    CAST(timestamp AS TIMESTAMP),
+                    CAST(transaction_amount AS DOUBLE)
+                FROM tmp_csv
+                RETURNING 1;
+                """
+            ).fetchall()
+        except duckdb.ConversionException as e:
+            # bad types in CSV (e.g., 'not-an-int' for user_id, 'ten' for amount)
+            raise HTTPException(status_code=400, detail=f"Invalid data format: {e}")
+        except duckdb.Error as e:
+            # any other DuckDB ingestion error
+            raise HTTPException(status_code=400, detail=f"Ingestion error: {e}")
 
         return JSONResponse({"status": "ok", "rows_inserted": len(inserted)})
     finally:
