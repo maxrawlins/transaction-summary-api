@@ -5,6 +5,17 @@ It ingests a CSV of transactions and returns per-user summary stats (count, min,
 
 ---
 
+Approach:
+-	I chose FastAPI because it makes it quick to build REST endpoints with automatic validation and docs.
+-	I used DuckDB instead of a heavier database since it can ingest large CSVs directly and run analytical queries efficiently.
+-	The /upload endpoint handles file validation, schema checks, and inserts into a persistent DuckDB file.
+-	The /summary endpoint builds a query dynamically and returns basic stats (count, min, max, mean) for a user, with optional date filters.
+-	I wrote tests with pytest to check both happy paths and error cases.
+-	The project is structured into app/ for the API, tests/ for tests, and scripts/ for utilities like data generation.
+
+
+---
+
 ## Setup
 
 ### 1. Clone the repo
