@@ -1,3 +1,13 @@
+"""
+Transactions Summary API
+
+FastAPI service that:
+1. Lets you upload CSV file of transactions, which then gets stored in a DuckDB database.
+2. Lets you query per-user stats (count, min, max, mean) over a date range (which is optional).
+
+Expected CSV columns: transaction_id, user_id, product_id, timestamp, transaction_amount
+"""
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
@@ -17,7 +27,8 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "transactions.du
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 def get_conn():
-    # opens a DuckDB connection and ensure the transactions table exists
+    """" Opens a DuckDB connection and ensures the transactions table exists. 
+    If it doesnt yet exist it will create it"""
     conn = duckdb.connect(DB_PATH)
     conn.execute(
         """
@@ -49,7 +60,12 @@ app = FastAPI(
 # response models
 
 class SummaryResponse(BaseModel):
-    # the shape of the JSON returned by the /summary endpoint
+    """
+    Response that's returned by the /summary endpoint
+
+    Gives back basic stats for a user's transactions over an optional time window including: 
+    how many transactions, min, max, and average amount
+    """
     user_id: int
     start_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -63,11 +79,20 @@ class SummaryResponse(BaseModel):
 
 # endpoints
 
-
-# upload a CSV -> save to temp file -> load into DuckDB -> validate columns -> insert into transactions
 @app.post("/upload")
 async def upload_csv(file: UploadFile = File(...)):
-    
+    """
+    Upload CSV file containing transactions and store in the DuckDB database
+
+    The CSV file must contian the columns: transaction_id, user_id, product_id, timestamp, transaction_amount
+
+    Returns:
+        JSON with the status and the number of rows inserted into the DuckDB database
+
+    Raises:
+        - 400 if the file recieved isn’t a CSV or is missing any required columns
+        - 500 if saving or loading the file goes wrong
+    """
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
 
@@ -121,13 +146,21 @@ async def upload_csv(file: UploadFile = File(...)):
             pass
 
 
-# get summary stats (count, min, max, mean) for a user's transactions (optional date range)
 @app.get("/summary/{user_id}", response_model=SummaryResponse)
 def summary_user(
     user_id: int,
     start: Optional[date] = Query(default=None, description="Start date (inclusive, YYYY-MM-DD)"),
     end: Optional[date] = Query(default=None, description="End date (inclusive, YYYY-MM-DD)"),
 ):
+    """
+    Get the summary statistics for a user’s transactions: 
+    number of transactions, min, max, and average transaction amounts
+
+    You can optionally pass a start and/or end date to filter the range to a more specific time range
+    
+    If no transactions found it returns a 404
+    """
+    
     # reject invalid date ranges
     if start and end and end < start:
         raise HTTPException(status_code=400, detail="end date must be on/after start date.")
