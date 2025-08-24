@@ -141,7 +141,7 @@ def test_upload_rejects_invalid_amount_type():
 
 
 def test_upload_accepts_extra_columns_and_casts_strings():
-    # Extra, irrelevant columns should be ignored; numeric strings should CAST correctly
+    # extra, irrelevant columns should be ignored; numeric strings should CAST correctly
     out = io.StringIO()
     writer = csv.DictWriter(
         out,
@@ -230,5 +230,6 @@ def test_summary_handles_null_amounts():
     assert body["mean"] is None
     
 def test_summary_validation_errors_from_fastapi():
+    # FastAPI should return 422 for invalid path/query params
     assert client.get("/summary/not-an-int").status_code == 422
     assert client.get("/summary/1?start=2024-13-99&end=nope").status_code == 422

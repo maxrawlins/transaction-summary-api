@@ -10,7 +10,7 @@ Expected CSV columns: transaction_id, user_id, product_id, timestamp, transactio
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, date, timedelta
 import duckdb
@@ -27,7 +27,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "transactions.du
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 def get_conn():
-    """" Opens a DuckDB connection and ensures the transactions table exists. 
+    """ Opens a DuckDB connection and ensures the transactions table exists. 
     If it doesnt yet exist it will create it"""
     conn = duckdb.connect(DB_PATH)
     conn.execute(
@@ -84,13 +84,13 @@ async def upload_csv(file: UploadFile = File(...)):
     """
     Upload CSV file containing transactions and store in the DuckDB database
 
-    The CSV file must contian the columns: transaction_id, user_id, product_id, timestamp, transaction_amount
+    The CSV file must contain the columns: transaction_id, user_id, product_id, timestamp, transaction_amount
 
     Returns:
         JSON with the status and the number of rows inserted into the DuckDB database
 
     Raises:
-        - 400 if the file recieved isn’t a CSV or is missing any required columns
+        - 400 if the file received isn’t a CSV or is missing any required columns
         - 500 if saving or loading the file goes wrong
     """
     if not file.filename.lower().endswith(".csv"):
@@ -104,6 +104,7 @@ async def upload_csv(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {e}")
 
+    conn = None
     try:
         conn = get_conn()
 
@@ -122,7 +123,7 @@ async def upload_csv(file: UploadFile = File(...)):
         if missing := (required - cols):
             raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(sorted(missing))}")
 
-                # insert rows into transactions table with explicit type casting
+        # insert rows into transactions table with explicit type casting
         try:
             inserted = conn.execute(
                 """
@@ -138,19 +139,24 @@ async def upload_csv(file: UploadFile = File(...)):
                 """
             ).fetchall()
         except duckdb.ConversionException as e:
-            # bad types in CSV (e.g., 'not-an-int' for user_id, 'ten' for amount)
             raise HTTPException(status_code=400, detail=f"Invalid data format: {e}")
         except duckdb.Error as e:
-            # any other DuckDB ingestion error
             raise HTTPException(status_code=400, detail=f"Ingestion error: {e}")
 
         return JSONResponse({"status": "ok", "rows_inserted": len(inserted)})
+
     finally:
-        # clean up temp file
+        # clean up connection + temp file
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
         try:
             os.remove(tmp_path)
         except Exception:
             pass
+
 
 
 @app.get("/summary/{user_id}", response_model=SummaryResponse)
@@ -172,38 +178,43 @@ def summary_user(
     if start and end and end < start:
         raise HTTPException(status_code=400, detail="end date must be on/after start date.")
 
-    conn = get_conn()
+    conn = None
+    try:
+        conn = get_conn()
 
-    # build WHERE clause dynamically based on filters
-    conditions, params = ["user_id = ?"], [user_id]
-    if start:
-        conditions.append("timestamp >= ?")
-        params.append(datetime.combine(start, datetime.min.time()))
-    if end:
-        end_next = datetime.combine(end, datetime.min.time()) + timedelta(days=1)
-        conditions.append("timestamp < ?")
-        params.append(end_next)
+        # build WHERE clause dynamically based on filters
+        conditions, params = ["user_id = ?"], [user_id]
+        if start:
+            conditions.append("timestamp >= ?")
+            params.append(datetime.combine(start, datetime.min.time()))
+        if end:
+            end_next = datetime.combine(end, datetime.min.time()) + timedelta(days=1)
+            conditions.append("timestamp < ?")
+            params.append(end_next)
 
-    query = f"""
-        SELECT COUNT(*) AS count,
-            MIN(transaction_amount) AS min,
-            MAX(transaction_amount) AS max,
-            AVG(transaction_amount) AS mean
-        FROM transactions
-        WHERE {' AND '.join(conditions)};
-    """
+        query = f"""
+            SELECT COUNT(*) AS count,
+                MIN(transaction_amount) AS min,
+                MAX(transaction_amount) AS max,
+                AVG(transaction_amount) AS mean
+            FROM transactions
+            WHERE {' AND '.join(conditions)};
+        """
 
-    # run query, return 404 if no transactions found
-    count, min_v, max_v, mean_v = conn.execute(query, params).fetchone()
-    if count == 0:
-        raise HTTPException(status_code=404, detail="No transactions found for the given criteria.")
+        # run query, return 404 if no transactions found
+        count, min_v, max_v, mean_v = conn.execute(query, params).fetchone()
+        if count == 0:
+            raise HTTPException(status_code=404, detail="No transactions found for the given criteria.")
 
-    return SummaryResponse(
-        user_id=user_id,
-        start_date=start,
-        end_date=end,
-        count=count,
-        min=min_v,
-        max=max_v,
-        mean=mean_v,
-    )
+        return SummaryResponse(
+            user_id=user_id,
+            start_date=start,
+            end_date=end,
+            count=count,
+            min=min_v,
+            max=max_v,
+            mean=mean_v,
+        )
+    finally:
+        if conn is not None:
+            conn.close()
